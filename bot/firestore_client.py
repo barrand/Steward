@@ -291,6 +291,122 @@ def get_due_reminders() -> list[dict]:
 
 # ── Write Layer (all log to changelog) ────────────────────
 
+def save_interview(member_id: str, work: str, family: str, health: str, faith: str,
+                  prayer_requests: list[str], raw_notes: str) -> str:
+    """Save a formal interview record."""
+    db = get_db()
+    interview = {
+        "member_id": member_id,
+        "member_name": _get_member_name(member_id),
+        "date": datetime.now(timezone.utc).isoformat(),
+        "work_notes": work or "",
+        "family_notes": family or "",
+        "health_notes": health or "",
+        "faith_notes": faith or "",
+        "prayer_requests": prayer_requests or [],
+        "raw_notes": raw_notes or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db.collection("interviews").add(interview)
+    # Update member's last_interview_date
+    db.collection("members").document(member_id).update({
+        "last_interview_date": datetime.now(timezone.utc).isoformat()
+    })
+    logger.info("Saved interview for member %s", member_id)
+    return "✓ Interview saved."
+
+
+def save_note(member_id: str, context: str, text: str, prayer_requests: list[str] = None) -> str:
+    """Save a casual note."""
+    db = get_db()
+    note = {
+        "member_id": member_id,
+        "member_name": _get_member_name(member_id),
+        "context": context,
+        "text": text,
+        "prayer_requests": prayer_requests or [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db.collection("notes").add(note)
+    logger.info("Saved note for member %s", member_id)
+    return "✓ Note saved."
+
+
+def add_prayer_request(member_id: str, text: str, category: str = "other") -> str:
+    """Add a prayer request with two-touch schedule."""
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    prayer = {
+        "member_id": member_id,
+        "member_name": _get_member_name(member_id),
+        "request_text": text,
+        "category": category,
+        "date_created": now.isoformat(),
+        "status": "pending",
+        "answered_date": None,
+        "answered_note": None,
+        "remind_count": 0,
+        "last_reminded": None,
+        "next_remind_date": (now.timestamp() + (30 * 86400)).isoformat(),  # 30 days
+    }
+    db.collection("prayer_requests").add(prayer)
+    logger.info("Added prayer request for member %s: %s", member_id, text[:50])
+    return f"✓ Prayer request saved: {text}"
+
+
+def schedule_follow_up(member_id: str, topic: str, due_date: str, notes: str = "") -> str:
+    """Schedule a follow-up reminder."""
+    db = get_db()
+    follow_up = {
+        "member_id": member_id,
+        "member_name": _get_member_name(member_id),
+        "topic": topic,
+        "date_created": datetime.now(timezone.utc).isoformat(),
+        "due_date": due_date,
+        "completed_date": None,
+        "notes": notes,
+        "status": "pending",
+        "source": "bot",
+    }
+    db.collection("follow_ups").add(follow_up)
+    logger.info("Scheduled follow-up for member %s: %s (due %s)", member_id, topic, due_date)
+    return f"✓ Follow-up scheduled: {topic} (due {due_date})"
+
+
+def complete_follow_up(follow_up_id: str, notes: str = "") -> str:
+    """Mark a follow-up as done."""
+    db = get_db()
+    db.collection("follow_ups").document(follow_up_id).update({
+        "status": "done",
+        "completed_date": datetime.now(timezone.utc).isoformat(),
+        "notes": notes or "",
+    })
+    logger.info("Completed follow-up %s", follow_up_id)
+    return "✓ Follow-up marked as done."
+
+
+def snooze_follow_up(follow_up_id: str, until_date: str) -> str:
+    """Push a follow-up's due date out."""
+    db = get_db()
+    db.collection("follow_ups").document(follow_up_id).update({
+        "due_date": until_date,
+    })
+    logger.info("Snoozed follow-up %s until %s", follow_up_id, until_date)
+    return f"✓ Follow-up snoozed until {until_date}."
+
+
+def complete_prayer_request(prayer_id: str, answered_note: str = "") -> str:
+    """Mark a prayer request as answered."""
+    db = get_db()
+    db.collection("prayer_requests").document(prayer_id).update({
+        "status": "answered",
+        "answered_date": datetime.now(timezone.utc).isoformat(),
+        "answered_note": answered_note or "",
+    })
+    logger.info("Marked prayer %s as answered", prayer_id)
+    return "✓ Prayer marked as answered."
+
+
 def add_reminder(time_iso: str, message: str, chat_id: int) -> dict:
     """Add a reminder to Firestore."""
     db = get_db()
@@ -301,7 +417,7 @@ def add_reminder(time_iso: str, message: str, chat_id: int) -> dict:
         "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    ref = db.collection("reminders").add(reminder)
+    db.collection("reminders").add(reminder)
     logger.info("Added reminder: %s", message[:50])
     return reminder
 
@@ -311,6 +427,12 @@ def mark_reminder_fired(reminder_id: str):
     db = get_db()
     db.collection("reminders").document(reminder_id).update({"status": "fired"})
     logger.info("Marked reminder %s as fired", reminder_id)
+
+
+def _get_member_name(member_id: str) -> str:
+    """Get member name by ID (helper)."""
+    with _cache_lock:
+        return _cache["members"].get(member_id, {}).get("name", "?")
 
 
 def save_chat_message(role: str, text: str):

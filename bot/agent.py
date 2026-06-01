@@ -125,10 +125,143 @@ def _generate(contents, config, *, primary_model: str | None = None, fallback_mo
         _log_usage(fallback, resp)
         return resp
 
-# Tool declarations (TODO: implement Stew tools — interview, prayer, followup, member, calendar, reminder)
-# For now, minimal stub to allow bot to start
+# Tool declarations for Stew
 FUNCTION_TOOLS = [
     types.Tool(function_declarations=[
+        # ── Read tools (instant, no confirmation) ──
+        types.FunctionDeclaration(
+            name="get_member",
+            description="Get a member's profile + latest interview summary.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "name": types.Schema(type=types.Type.STRING, description="Member name"),
+                },
+                required=["name"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="get_upcoming_birthdays",
+            description="Get members with birthdays in the next N days.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "days": types.Schema(type=types.Type.INTEGER, description="Days ahead (default 7)"),
+                },
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="get_pending_follow_ups",
+            description="Get all pending follow-ups, sorted by due date.",
+            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
+        ),
+
+        # ── Write tools (queued for confirmation) ──
+        types.FunctionDeclaration(
+            name="save_interview",
+            description="Save a formal interview record with structured notes.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "member_id": types.Schema(type=types.Type.STRING, description="Member ID"),
+                    "work": types.Schema(type=types.Type.STRING, description="Work situation notes"),
+                    "family": types.Schema(type=types.Type.STRING, description="Family updates"),
+                    "health": types.Schema(type=types.Type.STRING, description="Health topics"),
+                    "faith": types.Schema(type=types.Type.STRING, description="Faith/testimony notes"),
+                    "prayer_requests": types.Schema(
+                        type=types.Type.ARRAY,
+                        items=types.Schema(type=types.Type.STRING),
+                        description="List of prayer requests"
+                    ),
+                    "raw_notes": types.Schema(type=types.Type.STRING, description="Raw transcript"),
+                },
+                required=["member_id", "prayer_requests"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="save_note",
+            description="Save a casual note (hallway chat, text, etc.).",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "member_id": types.Schema(type=types.Type.STRING, description="Member ID"),
+                    "context": types.Schema(type=types.Type.STRING, description="Context: 'at church', 'text', 'phone call', etc."),
+                    "text": types.Schema(type=types.Type.STRING, description="What was discussed"),
+                    "prayer_requests": types.Schema(
+                        type=types.Type.ARRAY,
+                        items=types.Schema(type=types.Type.STRING),
+                        description="Any prayer requests mentioned"
+                    ),
+                },
+                required=["member_id", "context", "text"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="add_prayer_request",
+            description="Add a prayer request with two-touch reminder schedule (30d, 240d).",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "member_id": types.Schema(type=types.Type.STRING, description="Member ID"),
+                    "text": types.Schema(type=types.Type.STRING, description="Prayer request text"),
+                    "category": types.Schema(
+                        type=types.Type.STRING,
+                        description="Category: health, work, family, faith, or other"
+                    ),
+                },
+                required=["member_id", "text"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="schedule_follow_up",
+            description="Schedule a follow-up reminder.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "member_id": types.Schema(type=types.Type.STRING, description="Member ID"),
+                    "topic": types.Schema(type=types.Type.STRING, description="What to follow up on"),
+                    "due_date": types.Schema(type=types.Type.STRING, description="Due date (YYYY-MM-DD)"),
+                    "notes": types.Schema(type=types.Type.STRING, description="Context notes"),
+                },
+                required=["member_id", "topic", "due_date"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="complete_follow_up",
+            description="Mark a follow-up as done.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "follow_up_id": types.Schema(type=types.Type.STRING, description="Follow-up ID"),
+                    "notes": types.Schema(type=types.Type.STRING, description="Optional completion notes"),
+                },
+                required=["follow_up_id"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="snooze_follow_up",
+            description="Push a follow-up's due date out.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "follow_up_id": types.Schema(type=types.Type.STRING, description="Follow-up ID"),
+                    "until_date": types.Schema(type=types.Type.STRING, description="New due date (YYYY-MM-DD)"),
+                },
+                required=["follow_up_id", "until_date"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="complete_prayer_request",
+            description="Mark a prayer request as answered.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "prayer_id": types.Schema(type=types.Type.STRING, description="Prayer request ID"),
+                    "answered_note": types.Schema(type=types.Type.STRING, description="How it was answered"),
+                },
+                required=["prayer_id"],
+            ),
+        ),
         types.FunctionDeclaration(
             name="set_reminder",
             description="Set a timed reminder.",
@@ -345,134 +478,124 @@ def _execute_and_log(pw: PendingWrite, log: WriteLog, success_instruction: str) 
 def _dispatch_tool_call(
     name: str, args: dict, chat_id: int, executed_log: WriteLog | None = None,
 ) -> tuple[str, list[PendingWrite] | None]:
-    """Execute a tool call. Returns (result_text, optional_pending_writes).
-    Safe operations (adds, updates) auto-execute immediately and append their
-    outcome to executed_log when provided.
-    Destructive/high-stakes operations return pending writes for confirmation.
+    """Execute a Stew tool call. Returns (result_text, optional_pending_writes).
+    Read tools execute instantly. Write tools return PendingWrite for confirmation.
     """
     if executed_log is None:
         executed_log = []
     logger.info("Tool call: %s(%s)", name, str(args)[:200])
     try:
         # ── Read tools (instant) ──
-        if name == "read_plan_summary":
-            return read_plan_summary(), None
+        if name == "get_member":
+            result = get_member_summary(args["name"])
+            return result or f"Member '{args['name']}' not found.", None
 
-        elif name == "read_day":
-            return read_day(args["day_number"]), None
+        elif name == "get_upcoming_birthdays":
+            days = args.get("days", 7)
+            birthdays = get_upcoming_birthdays(days)
+            if not birthdays:
+                return f"No birthdays in the next {days} days.", None
+            lines = [f"🎂 Birthdays in the next {days} days:"]
+            for b in birthdays:
+                name = b.get("name", "?")
+                bday = b.get("birthday", "")
+                lines.append(f"  • {name} — {bday[-5:]}")
+            return "\n".join(lines), None
 
-        elif name == "read_booking":
-            return read_booking(args["booking_id"]), None
+        elif name == "get_pending_follow_ups":
+            return get_pending_follow_ups(), None
 
-        elif name == "get_needs_booking":
-            return get_needs_booking(), None
-
-        # ── Auto-execute (safe, non-destructive) ──
-        elif name == "add_activity":
-            gps = args.get("gps")
-            if isinstance(gps, str):
-                gps = json.loads(gps)
-            atype = args["activity_type"]
-            if atype == "food":
-                missing = []
-                if not args.get("time"):
-                    missing.append("time (HH:MM)")
-                if not gps:
-                    missing.append("gps ([lat, lng])")
-                if not args.get("specialty"):
-                    missing.append("specialty (what the place is famous for)")
-                if missing:
-                    return (
-                        f"REJECTED — food activities require: {', '.join(missing)}. "
-                        "Look up the restaurant and call add_activity again with all fields filled in."
-                    ), None
-            pw = prepare_add_activity(
-                day_number=args["day_number"],
-                slug=args["slug"],
-                name=args["name"],
-                activity_type=args["activity_type"],
-                booking_required=args["booking_required"],
-                time=args.get("time", ""),
-                gps=gps,
-                notes=args.get("notes", ""),
-                specialty=args.get("specialty", ""),
-                sort_order=args.get("sort_order"),
-                booking_ref=args.get("booking_ref", ""),
+        # ── Write tools (auto-execute) ──
+        elif name == "save_interview":
+            pw = PendingWrite(
+                operation="save_interview",
+                args={
+                    "member_id": args["member_id"],
+                    "work": args.get("work", ""),
+                    "family": args.get("family", ""),
+                    "health": args.get("health", ""),
+                    "faith": args.get("faith", ""),
+                    "prayer_requests": args.get("prayer_requests", []),
+                    "raw_notes": args.get("raw_notes", ""),
+                },
+                summary="Save interview"
             )
-            return _execute_and_log(pw, executed_log, "Tell the user what was added. Mention they can say 'undo' to revert."), None
+            return _execute_and_log(pw, executed_log, "Interview saved!"), None
 
-        elif name == "update_activity":
-            value = args["value"]
-            try:
-                value = json.loads(value)
-            except (json.JSONDecodeError, ValueError, TypeError):
-                pass
-            pw = prepare_update_activity(args["day_number"], args["slug"], args["field"], value)
-            return _execute_and_log(pw, executed_log, "Tell the user what changed. Mention they can say 'undo' to revert."), None
-
-        elif name == "add_note":
-            pw = prepare_add_note(args["text"])
-            return _execute_and_log(pw, executed_log, ""), None
-
-        elif name == "add_todo":
-            pw = prepare_add_todo(
-                text=args["text"],
-                category=args.get("category", "prep"),
-                due_date=args.get("due_date", ""),
+        elif name == "save_note":
+            pw = PendingWrite(
+                operation="save_note",
+                args={
+                    "member_id": args["member_id"],
+                    "context": args["context"],
+                    "text": args["text"],
+                    "prayer_requests": args.get("prayer_requests", []),
+                },
+                summary="Save casual note"
             )
-            return _execute_and_log(pw, executed_log, "Tell the user the todo was added."), None
+            return _execute_and_log(pw, executed_log, "Note saved!"), None
 
-        elif name == "remove_activity":
-            pw = prepare_remove_activity(args["day_number"], args["slug"])
-            return _execute_and_log(pw, executed_log, "Tell the user what was removed. Mention they can say 'undo' to revert."), None
-
-        elif name == "complete_todo":
-            pw = prepare_complete_todo(args["todo_id"])
-            return _execute_and_log(pw, executed_log, ""), None
-
-        # ── Needs confirmation (booking/financial) ──
-        elif name == "update_booking":
-            value = args["value"]
-            try:
-                value = json.loads(value)
-            except (json.JSONDecodeError, ValueError, TypeError):
-                pass
-            pw = prepare_update_booking(args["booking_id"], args["field"], value)
-            return "PENDING — NOT YET SAVED. Show the change and wait for confirmation.", [pw]
-
-        elif name == "confirm_booking_link":
-            pw = prepare_confirm_booking(
-                booking_id=args["booking_id"],
-                day_number=args["day_number"],
-                activity_slug=args["activity_slug"],
-                confirmation_code=args.get("confirmation_code", ""),
+        elif name == "add_prayer_request":
+            pw = PendingWrite(
+                operation="add_prayer_request",
+                args={
+                    "member_id": args["member_id"],
+                    "text": args["text"],
+                    "category": args.get("category", "other"),
+                },
+                summary=f"Add prayer: {args['text'][:50]}"
             )
-            return "PENDING — NOT YET SAVED. Confirm with user before linking.", [pw]
+            return _execute_and_log(pw, executed_log, "Prayer request added!"), None
 
-        elif name == "confirm_activity":
-            pw = prepare_confirm_activity(
-                day_number=args["day_number"],
-                slug=args["slug"],
-                confirmation_code=args["confirmation_code"],
-                details=args.get("details", ""),
-                cost=args.get("cost", ""),
+        elif name == "schedule_follow_up":
+            pw = PendingWrite(
+                operation="schedule_follow_up",
+                args={
+                    "member_id": args["member_id"],
+                    "topic": args["topic"],
+                    "due_date": args["due_date"],
+                    "notes": args.get("notes", ""),
+                },
+                summary=f"Schedule follow-up: {args['topic']}"
             )
-            return "PENDING — NOT YET SAVED. Show the user what will be confirmed and wait for confirmation via the inline buttons.", [pw]
+            return _execute_and_log(pw, executed_log, "Follow-up scheduled!"), None
 
-        elif name == "get_todos":
-            return get_todos_text(include_ids=True), None
+        elif name == "complete_follow_up":
+            pw = PendingWrite(
+                operation="complete_follow_up",
+                args={
+                    "follow_up_id": args["follow_up_id"],
+                    "notes": args.get("notes", ""),
+                },
+                summary="Mark follow-up done"
+            )
+            return _execute_and_log(pw, executed_log, "Follow-up marked as done!"), None
+
+        elif name == "snooze_follow_up":
+            pw = PendingWrite(
+                operation="snooze_follow_up",
+                args={
+                    "follow_up_id": args["follow_up_id"],
+                    "until_date": args["until_date"],
+                },
+                summary=f"Snooze follow-up until {args['until_date']}"
+            )
+            return _execute_and_log(pw, executed_log, "Follow-up snoozed!"), None
+
+        elif name == "complete_prayer_request":
+            pw = PendingWrite(
+                operation="complete_prayer_request",
+                args={
+                    "prayer_id": args["prayer_id"],
+                    "answered_note": args.get("answered_note", ""),
+                },
+                summary="Mark prayer as answered"
+            )
+            return _execute_and_log(pw, executed_log, "Prayer marked as answered!"), None
 
         elif name == "set_reminder":
             reminder = add_reminder(args["time"], args["message"], chat_id)
-            return f"Reminder set for {args['time']}: {args['message']}", None
-
-        elif name == "undo_last_change":
-            pw = PendingWrite(
-                operation="undo_last_change",
-                args={},
-                summary="Undo last change",
-            )
-            return "PENDING — Confirm undo?", [pw]
+            return f"✓ Reminder set for {args['time']}", None
 
         else:
             return f"Unknown tool: {name}", None
@@ -562,22 +685,19 @@ async def process_message(
     if deep_requested:
         gen_primary = PRIMARY_MODEL
         gen_fallback = FALLBACK_MODEL
-        # -1 = dynamic: Pro uses this for multi-step itinerary edits.
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=FUNCTION_TOOLS,
-            thinking_config=types.ThinkingConfig(thinking_budget=-1),
         )
-        logger.info("Stew mode=deep primary=%s", gen_primary)
+        logger.info("Stew mode=default primary=%s fallback=%s", gen_primary, gen_fallback)
     else:
-        # Fast path: flash, no thinking budget — use /deep for hard reasoning.
-        gen_primary = SHALLOW_MODEL
-        gen_fallback = PRIMARY_MODEL if SHALLOW_MODEL != PRIMARY_MODEL else FALLBACK_MODEL
+        gen_primary = PRIMARY_MODEL
+        gen_fallback = FALLBACK_MODEL
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             tools=FUNCTION_TOOLS,
         )
-        logger.info("Stew mode=shallow primary=%s fallback=%s", gen_primary, gen_fallback)
+        logger.info("Stew mode=default primary=%s fallback=%s", gen_primary, gen_fallback)
 
     all_pending_writes: list[PendingWrite] = []
     executed_log: WriteLog = []
