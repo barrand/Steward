@@ -1,11 +1,11 @@
-"""Firestore client for Stew Bot — single interface to all trip data.
+"""Firestore client for Stew Bot — single interface to quorum member data.
 
 Used by:
 - The Telegram bot (imports as a library, uses in-memory cache)
-- Cursor agent (calls as CLI: python firestore_client.py read-plan)
+- CLI agent (calls as CLI: python firestore_client.py import-csv)
 
-Data model: map-based documents with dot-notation atomic updates.
-See the migration plan for full schema documentation.
+Data model: members, interviews, notes, prayer_requests, follow_ups collections.
+See the plan for full schema documentation.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
-logger = logging.getLogger("tanuki.firestore")
+logger = logging.getLogger("stew.firestore")
 
 
 # ── Structured JSON Logging for Cloud Run ─────────────────
@@ -95,19 +95,19 @@ def get_db():
 # ── In-Memory Cache ───────────────────────────────────────
 
 _cache = {
-    "plan": {},
-    "bookings": {},
-    "family": {},
-    "meta": {},
-    "notes": [],
-    "todos": [],
-    "reminders": [],
+    "members": {},           # {member_id: member_data}
+    "interviews": [],        # sorted by date desc
+    "notes": [],             # casual notes, sorted by date desc
+    "prayer_requests": [],   # status="pending", sorted by next_remind_date asc
+    "follow_ups": [],        # status="pending", sorted by due_date asc
+    "meta": {},              # reminder state, chat history
+    "reminders": [],         # pending reminders
 }
 _cache_lock = threading.Lock()
 _listeners = []
 _collections_loaded: set = set()
 _cache_ready = threading.Event()
-_REQUIRED_COLLECTIONS = {"plan", "bookings", "family", "meta", "notes", "todos", "reminders"}
+_REQUIRED_COLLECTIONS = {"members", "interviews", "notes", "prayer_requests", "follow_ups", "meta", "reminders"}
 
 
 def _mark_loaded(name: str):
