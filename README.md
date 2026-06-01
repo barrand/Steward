@@ -73,8 +73,11 @@ gcloud builds submit --tag gcr.io/[PROJECT]/stew bot/
 gcloud run deploy stew \
   --image gcr.io/[PROJECT]/stew \
   --set-env-vars TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN,... \
+  --min-instances=0 \
   --region us-central1
 ```
+
+⚠️ **Cost Control**: The `--min-instances=0` flag prevents Cloud Run from keeping instances warm, saving ~$60/month. You'll only pay for CPU time when messages actually arrive (typically <$1/month for low usage). Without this, you'll be charged $2+ per day even when idle.
 
 ### 7. Set up Cloud Scheduler jobs
 
@@ -191,6 +194,28 @@ Most interactions are **natural language**, not rigid commands. Examples:
 
 "Remind me to follow up with David in 3 weeks"
 → Stew schedules a follow-up with that due date
+```
+
+## Costs & Billing
+
+Stew runs on Google Cloud Platform. Estimated monthly costs (with `--min-instances=0`):
+
+| Service | Estimate | Notes |
+|---------|----------|-------|
+| Cloud Run | <$1 | Only charges for actual CPU time when messages arrive |
+| Firestore | <$5 | Free tier covers ~25k reads/day; Stew uses ~100/day |
+| Cloud Scheduler | Free | 3 free jobs/month, then $0.10/job/month |
+| Cloud Storage | <$1 | Minimal data, weekly backups only |
+| **Total** | **~$6-10/month** | Very cost-effective for low usage |
+
+**⚠️ WITHOUT `--min-instances=0`**: Cloud Run charges ~$2/day ($60/month) to keep instances warm, even when idle. Always set minimum instances to 0.
+
+### Shut Down Tanuki
+If you're paying for the old Tanuki bot, delete it to stop charges:
+
+```bash
+gcloud run services delete tanuki --region=us-central1
+# Or in Cloud Console: Cloud Run → tanuki → Delete
 ```
 
 ## Privacy & Security
