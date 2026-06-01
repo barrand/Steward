@@ -1,0 +1,59 @@
+# Secrets & Credentials
+.env
+.env.local
+.env.*.local
+!.env.example
+*-key.json
+service-account-key.json
+google_calendar_credentials.json
+token.json
+credentials.json
+
+# Member data (real PII)
+Elders.csv
+*.csv
+!sample_members.csv
+backups/
+*.backup.json
+firestore_export/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual env
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local dev
+.claude/
+*.local
+debug.log
