@@ -25,32 +25,17 @@ import firestore_client as fsc
 from tools import (
     PendingWrite,
     execute_writes,
-    prepare_add_activity,
-    prepare_remove_activity,
-    prepare_update_activity,
-    prepare_update_booking,
-    prepare_confirm_booking,
-    prepare_confirm_activity,
-    prepare_add_note,
-    prepare_add_todo,
-    prepare_complete_todo,
-    get_todos_text,
     add_reminder,
-    read_plan_summary,
-    read_day,
-    read_booking,
-    get_needs_booking,
+    get_member_summary,
+    get_pending_follow_ups,
+    get_upcoming_birthdays,
 )
 
-logger = logging.getLogger("tanuki.agent")
+logger = logging.getLogger("stew.agent")
 
 # ── Constants ────────────────────────────────────────────
 
-TRIP_START = date(2026, 4, 22)
-TRIP_END = date(2026, 5, 10)
-JST = ZoneInfo("Asia/Tokyo")
-PST = ZoneInfo("America/Los_Angeles")
-
+MT = ZoneInfo("America/Denver")
 CONFIRMATION_TIMEOUT_SEC = 300
 
 # ── Gemini Setup ─────────────────────────────────────────
@@ -62,14 +47,12 @@ client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
 # replying even when the frontier model is throttled or down.
 #
 # Override via env:
-#   STEW_MODEL          (default: gemini-3.1-pro-preview) — used for /deep turns
+#   STEW_MODEL          (default: gemini-2.5-flash)
 #   STEW_FALLBACK_MODEL (default: gemini-2.5-flash)
-#   STEW_SHALLOW_MODEL  (default: gemini-2.5-flash) — default chat (no /deep prefix)
 #
 # Set them equal to disable fallback entirely.
-PRIMARY_MODEL = os.environ.get("STEW_MODEL", "gemini-3.1-pro-preview")
+PRIMARY_MODEL = os.environ.get("STEW_MODEL", "gemini-2.5-flash")
 FALLBACK_MODEL = os.environ.get("STEW_FALLBACK_MODEL", "gemini-2.5-flash")
-SHALLOW_MODEL = os.environ.get("STEW_SHALLOW_MODEL", "gemini-3.1-pro-preview")
 
 # Leading `/deep` (case-insensitive) opts into PRIMARY_MODEL + extended thinking.
 _DEEP_PREFIX_RE = re.compile(r"^\s*/deep(?:\s+|$)", re.IGNORECASE)
@@ -142,211 +125,21 @@ def _generate(contents, config, *, primary_model: str | None = None, fallback_mo
         _log_usage(fallback, resp)
         return resp
 
-# Tool declarations — read tools execute immediately, write tools queue for confirmation
+# Tool declarations (TODO: implement Stew tools — interview, prayer, followup, member, calendar, reminder)
+# For now, minimal stub to allow bot to start
 FUNCTION_TOOLS = [
     types.Tool(function_declarations=[
-        # ── Read tools ──
-        types.FunctionDeclaration(
-            name="read_plan_summary",
-            description="Get a compact one-line-per-day overview of the entire trip plan.",
-            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
-        ),
-        types.FunctionDeclaration(
-            name="read_day",
-            description="Get full details for a specific day: activities (with GPS, times, booking status), meals, transport notes.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "day_number": types.Schema(type=types.Type.INTEGER, description="Day number (1-19)"),
-                },
-                required=["day_number"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="read_booking",
-            description="Get full details for a specific accommodation: address, GPS, PIN, confirmation code, check-in/out times.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "booking_id": types.Schema(
-                        type=types.Type.STRING,
-                        description="Booking ID: lax-hotel, tokyo-arrival, osaka, kyoto, hiroshima, toyohashi, tokyo-main",
-                    ),
-                },
-                required=["booking_id"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="get_needs_booking",
-            description="List all activities and bookings that still need to be booked/confirmed.",
-            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
-        ),
-
-        # ── Write tools ──
-        types.FunctionDeclaration(
-            name="add_activity",
-            description=(
-                "Add a new activity to a day's itinerary. User will be asked to confirm before saving.\n\n"
-                "IMPORTANT: ALWAYS call read_day FIRST to see the existing schedule, "
-                "then choose a time and sort_order that fit between other activities.\n\n"
-                "REQUIRED for ALL activities:\n"
-                "  • time — HH:MM that fits the day's schedule. ALWAYS provide a time. "
-                "Estimate based on what comes before and after. Never leave it blank.\n"
-                "  • gps — [lat, lng] of the location. ALWAYS provide GPS.\n\n"
-                "ADDITIONALLY for type='food':\n"
-                "  • specialty — what the place is famous for, e.g. 'Crispy tonkotsu ramen'\n"
-            ),
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "day_number": types.Schema(type=types.Type.INTEGER, description="Day number (1-19)"),
-                    "slug": types.Schema(type=types.Type.STRING, description="URL-safe ID like 'ramen-dinner' or 'meiji-shrine'"),
-                    "name": types.Schema(type=types.Type.STRING, description="Human-readable activity name"),
-                    "activity_type": types.Schema(type=types.Type.STRING, description="Type: food, temple, shrine, museum, shopping, transport, theme_park, nature, cultural, district, art, activity, market, memorial, aquarium, accommodation, travel, personal"),
-                    "booking_required": types.Schema(type=types.Type.BOOLEAN, description="Whether this activity needs advance booking"),
-                    "time": types.Schema(type=types.Type.STRING, description="Time in HH:MM format, e.g. '14:00'. ALWAYS provide this."),
-                    "gps": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.NUMBER), description="[latitude, longitude]. ALWAYS provide this."),
-                    "sort_order": types.Schema(type=types.Type.INTEGER, description="Position in the day's timeline. Check read_day output for existing sort_orders, then pick a value that places this activity chronologically. E.g. to insert between sort_order 3 and 4, use 4 and existing items will be bumped."),
-                    "booking_ref": types.Schema(type=types.Type.STRING, description="Confirmation/reference number. Set this if the user has already provided a confirmation code — do NOT leave it blank when a confirmation is known."),
-                    "notes": types.Schema(type=types.Type.STRING, description="Operational notes (Sam-safe, booking tips, etc.)"),
-                    "specialty": types.Schema(type=types.Type.STRING, description="What the place is famous for — 1 sentence describing the food/experience. REQUIRED for food activities."),
-                },
-                required=["day_number", "slug", "name", "activity_type", "booking_required", "time", "gps"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="remove_activity",
-            description="Remove an activity from a day's itinerary. User will be asked to confirm.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "day_number": types.Schema(type=types.Type.INTEGER, description="Day number"),
-                    "slug": types.Schema(type=types.Type.STRING, description="Activity slug to remove"),
-                },
-                required=["day_number", "slug"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="update_activity",
-            description="Update a single field of an existing activity. User will be asked to confirm.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "day_number": types.Schema(type=types.Type.INTEGER, description="Day number"),
-                    "slug": types.Schema(type=types.Type.STRING, description="Activity slug"),
-                    "field": types.Schema(type=types.Type.STRING, description="Field to update: name, time, type, notes, gps, gps_verified, booking_required, sort_order, specialty"),
-                    "value": types.Schema(type=types.Type.STRING, description="New value (JSON-encoded for arrays/objects)"),
-                },
-                required=["day_number", "slug", "field", "value"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="update_booking",
-            description="Update a single field of an accommodation booking. User will be asked to confirm.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "booking_id": types.Schema(type=types.Type.STRING, description="Booking ID"),
-                    "field": types.Schema(type=types.Type.STRING, description="Field to update"),
-                    "value": types.Schema(type=types.Type.STRING, description="New value"),
-                },
-                required=["booking_id", "field", "value"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="confirm_booking_link",
-            description="Mark an ACCOMMODATION booking as confirmed AND link it to its activity. ONLY for hotels/ryokans in the bookings collection (IDs: lax-hotel, tokyo-arrival, osaka, kyoto, hiroshima, toyohashi, tokyo-main). Do NOT use for Shinkansen, tickets, or activity bookings — use confirm_activity instead.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "booking_id": types.Schema(type=types.Type.STRING, description="Booking ID (must exist in bookings collection)"),
-                    "day_number": types.Schema(type=types.Type.INTEGER, description="Day the activity is on"),
-                    "activity_slug": types.Schema(type=types.Type.STRING, description="Activity slug to link"),
-                    "confirmation_code": types.Schema(type=types.Type.STRING, description="Booking confirmation code"),
-                },
-                required=["booking_id", "day_number", "activity_slug"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="confirm_activity",
-            description="Mark any activity as booked/confirmed — Shinkansen tickets, museum tickets, theme park passes, tour reservations, etc. Sets confirmation code + details on the activity itself. Use this for EVERYTHING except hotel/accommodation bookings.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "day_number": types.Schema(type=types.Type.INTEGER, description="Day number (1-19)"),
-                    "slug": types.Schema(type=types.Type.STRING, description="Activity slug (e.g. 'shinkansen-osaka', 'usj', 'peace-museum'). Call read_day first if unsure of the slug."),
-                    "confirmation_code": types.Schema(type=types.Type.STRING, description="Reservation/confirmation number or ID"),
-                    "details": types.Schema(type=types.Type.STRING, description="Human-readable booking details: train times, seat numbers, costs, special notes — everything worth remembering"),
-                    "cost": types.Schema(type=types.Type.STRING, description="Total cost as a string, e.g. '¥65,330' or '$450'"),
-                },
-                required=["day_number", "slug", "confirmation_code"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="add_note",
-            description="Save a timestamped note (e.g. a restaurant recommendation, packing reminder, or anything worth remembering).",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "text": types.Schema(type=types.Type.STRING, description="Note text"),
-                },
-                required=["text"],
-            ),
-        ),
         types.FunctionDeclaration(
             name="set_reminder",
-            description="Set a timed reminder. Time should be ISO format in JST during the trip, PST otherwise.",
+            description="Set a timed reminder.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "time": types.Schema(type=types.Type.STRING, description="ISO datetime, e.g. '2026-05-05T08:00:00+09:00'"),
+                    "time": types.Schema(type=types.Type.STRING, description="ISO datetime, e.g. '2026-05-05T14:00:00-07:00'"),
                     "message": types.Schema(type=types.Type.STRING, description="Reminder message"),
                 },
                 required=["time", "message"],
             ),
-        ),
-        types.FunctionDeclaration(
-            name="get_todos",
-            description="List all pending todo/action items for the trip.",
-            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
-        ),
-        types.FunctionDeclaration(
-            name="add_todo",
-            description="Add a todo/action item to the trip checklist. User will be asked to confirm.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "text": types.Schema(type=types.Type.STRING, description="Todo item text"),
-                    "category": types.Schema(type=types.Type.STRING, description="Category: booking, prep, packing, transport, or other"),
-                    "due_date": types.Schema(type=types.Type.STRING, description="Optional due date like '2026-04-20'"),
-                },
-                required=["text", "category"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="complete_todo",
-            description=(
-                "Mark a todo as done by its exact Firestore document id. "
-                "Always call get_todos FIRST in the same turn to get the list of "
-                "ids (each line is `id=<id>  [category] text`), pick the one the "
-                "user is referring to, then call complete_todo with that id. "
-                "Never guess an id. Auto-saves — no user confirmation needed."
-            ),
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "todo_id": types.Schema(
-                        type=types.Type.STRING,
-                        description="Exact Firestore document id from get_todos output.",
-                    ),
-                },
-                required=["todo_id"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="undo_last_change",
-            description="Undo the most recent data change. User will be asked to confirm.",
-            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
         ),
     ]),
 ]
@@ -354,143 +147,55 @@ FUNCTION_TOOLS = [
 
 # ── Date/Time Helpers ────────────────────────────────────
 
-def get_mode() -> str:
-    today = get_japan_date() if is_during_trip() else datetime.now(PST).date()
-    if today < TRIP_START:
-        return "pre_trip"
-    elif today <= TRIP_END:
-        return "during_trip"
-    return "post_trip"
-
-
-def is_during_trip() -> bool:
-    return TRIP_START <= datetime.now(JST).date() <= TRIP_END
-
-
-def get_japan_date() -> date:
-    return datetime.now(JST).date()
-
-
-def get_active_tz() -> ZoneInfo:
-    return JST if is_during_trip() else PST
-
-
 def get_now_str() -> str:
-    tz = get_active_tz()
-    now = datetime.now(tz)
-    tz_name = "JST" if tz == JST else "PST"
-    return now.strftime(f"%A %B %d, %Y %I:%M %p {tz_name}")
-
-
-def get_trip_day_number() -> int | None:
-    """Return current day number (1-19) if during the trip, else None."""
-    today = datetime.now(JST).date()
-    delta = (today - TRIP_START).days + 1
-    if 1 <= delta <= 19:
-        return delta
-    return None
+    """Current time in Mountain Time."""
+    now = datetime.now(MT)
+    return now.strftime("%A %B %d, %Y %I:%M %p MT")
 
 
 # ── System Prompt ────────────────────────────────────────
 
 def build_system_prompt() -> str:
-    plan_summary = fsc.get_plan_summary()
-    needs = fsc.get_needs_booking()
-    mode = get_mode()
+    """Build system prompt with Firestore cache context."""
     now_str = get_now_str()
+    members = fsc._cache.get("members", {})
+    follow_ups = fsc._cache.get("follow_ups", [])
+    prayers = fsc._cache.get("prayer_requests", [])
 
-    needs_text = ""
-    if needs:
-        items = [f"  - Day {n.get('day_number')}: {n.get('activity_name', n.get('booking_name', '?'))}" for n in needs]
-        needs_text = "STILL NEEDS BOOKING:\n" + "\n".join(items)
+    members_list = ", ".join(m.get("name", "?") for m in members.values())[:200]
 
-    mode_instructions = {
-        "pre_trip": (
-            "We are BEFORE the trip. Focus on planning, logistics, and booking reminders. "
-            "Nag about still-to-book items within 7 days of their date. Times are PST."
-        ),
-        "during_trip": (
-            "We are IN JAPAN right now. Focus on real-time help: transit, food, what's nearby, "
-            "today's plan, check-in info. Be concise — the family is on the go. Times are JST."
-        ),
-        "post_trip": (
-            "The trip is over. Answer questions about what we did, costs, memories. No briefings."
-        ),
-    }
+    return f"""You are Stew, a personal assistant for Bryce, an Elder's Quorum president.
 
-    day_hint = ""
-    day_num = get_trip_day_number()
-    if day_num:
-        day_hint = f"\nToday is Day {day_num} of the trip."
+Your job: Help Bryce remember and follow up on his quorum members. He conducts annual interviews where he learns about their work, family, health, faith — and what to pray for. You help him capture these notes naturally, track prayers, and schedule follow-ups.
 
-    return f"""You are Tanuki, the Barrand family's Japan trip assistant in a Telegram group chat.
+MEMBER DIRECTORY:
+{members_list}
 
-You are an AI with broad knowledge about Japan — weather, food, transit, culture, geography, history, and travel. Use this knowledge confidently. The trip data in Firestore (accessible via tools) contains booking-specific data. For everything else, answer from your general knowledge. NEVER say "I can't look that up" for general Japan questions.
+CURRENT TIME: {now_str} (Mountain Time)
 
-CRITICAL: To update trip data, you MUST use the provided tools. NEVER claim you updated data without calling the tool. Reads are instant (cached). Most writes auto-save immediately — just tell the user what was done. Only booking confirmations (confirm_booking_link, confirm_activity, update_booking) require user confirmation via inline buttons.
+PERSONALITY: Warm, spiritually supportive, understanding of LDS pastoral context. Keep responses concise — Bryce is busy.
 
-MULTI-STEP OPERATIONS: When a user says "move X to Day Y", call BOTH remove_activity AND add_activity in the same turn. Both auto-save. Don't do half the work — complete the full operation in one response.
+CAPTURING INTERVIEWS — your most important job:
+When Bryce tells you about a meeting with a member, extract:
+- Work situation and stress
+- Family updates (spouse, kids, activities)
+- Health topics
+- Faith/testimony notes
+- Prayer requests (be specific: "knee surgery" not "health")
 
-PERSONALITY: Warm, a little cheeky — like a well-prepared friend who knows Japan. Address family members by name. Light Japanese phrases OK.
+Always show a confirmation summary before saving.
 
-BREVITY: Keep answers SHORT — 2-4 sentences for simple questions, bullet points for lists. No preamble, no filler, no restating the question. Get to the point fast. Only give longer answers when the user explicitly asks for detail or the question genuinely requires it.
-
-NEVER generate text that looks like "📝 Proposed changes" or "Done! Added/Updated/Removed..." unless a tool ACTUALLY returned a SAVED result. The confirmation UI is handled by the system. If a user asks you to change something, CALL THE TOOL — do not describe the change in text.
-
-FAMILY: Bryce (45, trip organizer, art/photography), Marcia (49, speaks Japanese, healing ACL), Sam (22, One Piece/anime, NO raw fish), Lucas (18, vintage thrift/sewing), Emi (11, sushi/animals/games). From Utah.
-
-CURRENT TIME: {now_str}
-MODE: {mode}
-{mode_instructions.get(mode, "")}{day_hint}
-
-TRIP OVERVIEW (use read_day for details):
-{plan_summary}
-
-{needs_text}
-
-TRIP DASHBOARD: https://barrand-japan-trip.web.app (live checklist, maps, day-by-day view)
-
-TRIP DAYS: 1–19 (Day 1 = Apr 22 SLC→LAX, Day 19 = May 10 LAX→SLC). Always call read_plan_summary if unsure which day a date falls on.
-
-ACCOMMODATION BOOKING IDs: lax-hotel, tokyo-arrival, osaka, kyoto, hiroshima, toyohashi, tokyo-main
-Use read_booking to fetch full details (address, PIN, confirmation, GPS).
-
-CONFIRMING BOOKINGS — use the right tool:
-- Hotels/accommodations already in the bookings collection → confirm_booking_link
-- Shinkansen, museum tickets, USJ, tours, activity bookings → confirm_activity
-- When the user pastes a Shinkansen confirmation, ALWAYS call read_day first to find the correct slug, then use confirm_activity with the reservation number and full details.
-
-CRITICAL — when the user provides a confirmation number for ANYTHING:
-- ALWAYS set booking_ref / confirmation_code immediately. Never add something as "needs booking" when the user is handing you proof it's already booked.
-- If adding a new hotel/accommodation via add_activity, set booking_ref to the confirmation number in the same call. Do not add first and confirm later in two steps.
-- If the hotel should also be in the bookings collection (for /hotel command), call add_activity with booking_ref AND separately note that the bookings collection may need updating.
+TOOL HINTS (implementation in progress):
+- set_reminder: Schedule a reminder (ISO format, MT time)
+- [TODO] save_interview, save_note, add_prayer_request, schedule_follow_up, etc.
 
 RULES:
-- For food recs, always note Sam-safe options (no raw fish) and what Emi will love.
-- Include Google Maps links when you have GPS: https://maps.google.com/?q=LAT,LNG
-- When answering from trip data, cite naturally ("Your Kyoto check-in is 3 PM").
-- For general questions (weather, food, transit, culture), answer from your knowledge.
-- Only say "I don't know" for trip-specific data not in Firestore.
-- For transport: If it has a specific time (train departure, bus to USJ), add it as an activity with type="transport". Only use transport_notes for general day context ("local metro", "reserve seats").
-
-COMPLETING A TODO — REQUIRED WORKFLOW:
-When the user asks to mark/close/complete/finish a todo, ALWAYS in the same turn:
-1) Call get_todos to fetch the live list (each line shows `id=<id>  [category] text`).
-2) Pick the single todo that best matches the user's wording — you have the full list, so use your language understanding (synonyms, partial titles, plurals).
-3) Call complete_todo with the exact `todo_id` from step 1. NEVER make up an id.
-If nothing in the list plausibly matches, tell the user and show the candidates — do not call complete_todo.
-
-ADDING FOOD/RESTAURANT ACTIVITIES — REQUIRED WORKFLOW:
-Before adding any food activity, ALWAYS follow these steps:
-1. Call read_day first — see what's already scheduled, what times are taken, where the family will be
-2. Pick the right time — choose a slot that fits between existing activities. Think about travel time, meal timing (lunch ~12:00, dinner ~18:00), and proximity to nearby activities
-3. Look up the restaurant — use your knowledge to find GPS coordinates and what the place is famous for
-4. Call add_activity with ALL required fields:
-   • time — HH:MM that makes sense in the day's flow
-   • gps — [lat, lng] coordinates of the restaurant
-   • specialty — 1-sentence blurb: what cuisine, what dish they're known for, why it's worth going
-   • notes — Sam-safe status (no raw fish!), Emi/family relevance
-The add_activity tool will REJECT food items missing time, gps, or specialty. Do the research first so it succeeds on the first call.
+- ALWAYS resolve member names against the directory before assuming
+- If ambiguous, ask which member
+- For prayer requests, extract specific actionable items
+- Never fabricate notes — only save what Bryce tells you
+- Mark follow-ups done when Bryce says he talked to someone
+- Suggest marking prayers answered when Bryce mentions positive outcomes
 """
 
 
