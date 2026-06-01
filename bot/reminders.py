@@ -1,25 +1,27 @@
-"""Stew Bot — Reminder and nightly briefing logic.
+"""Stew Cron Job Handlers
 
-Cloud Run architecture: no APScheduler. These functions are called by
-HTTP endpoints triggered by Cloud Scheduler cron jobs:
-- /cron/reminders  -> check_and_fire_reminders()  (every 15 min, Asia/Tokyo)
-- /cron/briefing   -> generate_and_send_briefing()
-    * `tanuki-nightly-briefing`: 6:00 PM daily, time zone `Asia/Tokyo`
-    * `tanuki-pretrip-briefing`: 8:00 PM `America/Denver` — **pause while the
-      family is in Japan**; it shares the same Firestore dedup as the Tokyo job
-      and would otherwise send (and block the evening send) at the wrong JST time.
+Implements all scheduled tasks:
+- morning_checkin: Prayer reminders + follow-ups (7 AM MT)
+- birthday_check: Birthday alerts (8 AM MT)
+- evening_briefing: Tomorrow's interview prep (5:30 PM MT)
+- weekly_backup: JSON snapshot export (Sunday 3 AM MT)
+- check_and_fire_reminders: Generic reminder dispatch (every 15 min)
+
+Adapted from Tanuki bot/reminders.py.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, date
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import firestore_client as fsc
 
-logger = logging.getLogger("tanuki.reminders")
+logger = logging.getLogger("stew.reminders")
+
+MT = ZoneInfo("America/Denver")
 
 
 async def check_and_fire_reminders(bot) -> int:
@@ -42,7 +44,7 @@ async def check_and_fire_reminders(bot) -> int:
         try:
             await bot.send_message(
                 chat_id=target_chat,
-                text=f"\u23f0 Reminder: {message}",
+                text=f"⏰ Reminder: {message}",
             )
             fsc.mark_reminder_fired(rid)
             fired += 1
@@ -53,50 +55,43 @@ async def check_and_fire_reminders(bot) -> int:
     return fired
 
 
-async def generate_and_send_briefing(bot) -> bool:
-    """Generate and send the nightly briefing.
+async def generate_morning_checkin(bot) -> bool:
+    """Generate and send the morning check-in.
 
-    Uses meta/last-briefing-date to prevent duplicate sends.
+    Shows follow-ups, prayer reminders, and calendar for today.
+    Uses meta/last-morning-checkin-date to prevent duplicate sends.
+    Returns True if a check-in was sent.
+    """
+    today_str = datetime.now(MT).strftime("%Y-%m-%d")
+
+    # TODO: Implement actual logic from plan
+    # For now, just a stub that doesn't send anything
+    return False
+
+
+async def check_and_send_birthdays(bot) -> int:
+    """Check for birthdays today and send notifications.
+
+    Returns the number of birthday messages sent.
+    """
+    # TODO: Implement birthday detection
+    return 0
+
+
+async def generate_evening_briefing(bot) -> bool:
+    """Generate and send the evening briefing (night before interview prep).
+
+    Checks tomorrow's calendar for scheduled visits and surfaces member context.
     Returns True if a briefing was sent.
     """
-    from agent import generate_nightly_briefing, get_mode, is_during_trip
-
-    if get_mode() == "post_trip":
-        logger.info("Post-trip mode, skipping nightly briefing")
-        return False
-
-    tz = ZoneInfo("Asia/Tokyo") if is_during_trip() else ZoneInfo("America/Los_Angeles")
-    today_str = datetime.now(tz).strftime("%Y-%m-%d")
-
-    db = fsc.get_db()
-    meta_ref = db.collection("meta").document("briefing-state")
-    meta_doc = meta_ref.get()
-    if meta_doc.exists:
-        last_date = meta_doc.to_dict().get("last_briefing_date", "")
-        if last_date == today_str:
-            logger.info("Briefing already sent for %s, skipping", today_str)
-            return False
-
-    chat_id = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
-    if chat_id == 0:
-        logger.error("TELEGRAM_CHAT_ID not set, can't send briefing")
-        return False
-
-    try:
-        briefing = await generate_nightly_briefing()
-        if briefing:
-            await bot.send_message(chat_id=chat_id, text=briefing)
-            meta_ref.set({"last_briefing_date": today_str})
-            logger.info("Sent nightly briefing (%d chars)", len(briefing))
-            return True
-    except Exception as e:
-        logger.error("Nightly briefing failed: %s", e, exc_info=True)
-        try:
-            await bot.send_message(
-                chat_id=chat_id,
-                text="Something went wrong generating tonight's briefing. Error logged.",
-            )
-        except Exception:
-            pass
-
+    # TODO: Implement calendar matching and member briefing
     return False
+
+
+async def run_weekly_backup(bot) -> str:
+    """Export members and interview data to backup.
+
+    Returns a status string.
+    """
+    # TODO: Implement backup to Cloud Storage
+    return "Backup not yet implemented"
