@@ -9,6 +9,7 @@ import argparse
 import csv
 import sys
 from datetime import datetime
+from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import firestore_client as fsc
@@ -16,7 +17,7 @@ import firestore_client as fsc
 MT = ZoneInfo("America/Denver")
 
 
-def parse_name(full_name: str) -> tuple[str, bool]:
+def parse_name(full_name: str) -> Tuple[str, bool]:
     """Parse 'Last, First [Middle]' into 'First [Middle] Last'.
 
     Returns (parsed_name, is_inactive).
@@ -39,7 +40,7 @@ def parse_name(full_name: str) -> tuple[str, bool]:
     return full_name, is_inactive
 
 
-def parse_birth_date(date_str: str) -> str | None:
+def parse_birth_date(date_str: str) -> Optional[str]:
     """Parse 'DD Mon YYYY' to 'YYYY-MM-DD'.
 
     Returns None if parsing fails.
@@ -55,7 +56,7 @@ def parse_birth_date(date_str: str) -> str | None:
         return None
 
 
-def parse_phone(phone_str: str) -> str | None:
+def parse_phone(phone_str: str) -> Optional[str]:
     """Parse phone number, remove parens and dashes as-is.
 
     Returns None if empty.
