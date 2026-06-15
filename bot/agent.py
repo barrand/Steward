@@ -142,11 +142,12 @@ FUNCTION_TOOLS = [
         ),
         types.FunctionDeclaration(
             name="get_upcoming_birthdays",
-            description="Get members with birthdays in the next N days.",
+            description="Get members with birthdays in a window around today. Use days for upcoming birthdays, past_days for recent birthdays.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "days": types.Schema(type=types.Type.INTEGER, description="Days ahead (default 7)"),
+                    "days": types.Schema(type=types.Type.INTEGER, description="Days ahead to look (default 7)"),
+                    "past_days": types.Schema(type=types.Type.INTEGER, description="Days back to look (default 0). Set this to find recent birthdays."),
                 },
             ),
         ),
@@ -492,14 +493,27 @@ def _dispatch_tool_call(
 
         elif name == "get_upcoming_birthdays":
             days = args.get("days", 7)
-            birthdays = get_upcoming_birthdays(days)
+            past_days = args.get("past_days", 0)
+            birthdays = get_upcoming_birthdays(days=days, past_days=past_days)
             if not birthdays:
-                return f"No birthdays in the next {days} days.", None
-            lines = [f"🎂 Birthdays in the next {days} days:"]
+                window = []
+                if past_days:
+                    window.append(f"past {past_days} days")
+                if days:
+                    window.append(f"next {days} days")
+                return f"No birthdays in the {' and '.join(window)}.", None
+            lines = ["🎂 Birthdays:"]
             for b in birthdays:
-                name = b.get("name", "?")
+                bname = b.get("name", "?")
                 bday = b.get("birthday", "")
-                lines.append(f"  • {name} — {bday[-5:]}")
+                delta = b.get("_days_delta", 0)
+                if delta == 0:
+                    when = "today!"
+                elif delta > 0:
+                    when = f"in {delta}d"
+                else:
+                    when = f"{abs(delta)}d ago"
+                lines.append(f"  • {bname} — {bday[5:]} ({when})")
             return "\n".join(lines), None
 
         elif name == "get_pending_follow_ups":

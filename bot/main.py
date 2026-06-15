@@ -167,7 +167,7 @@ async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in birthdays:
         name = member.get("name", "?")
         bday = member.get("birthday", "")
-        days_until = member.get("_days_until", 0)
+        days_until = member.get("_days_delta", 0)
         when = "today!" if days_until == 0 else f"in {days_until}d"
         lines.append(f"• {name} — {bday[5:]} ({when})")
 

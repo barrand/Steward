@@ -266,8 +266,12 @@ def get_pending_follow_ups() -> list[dict]:
         return list(_cache["follow_ups"])
 
 
-def get_upcoming_birthdays(days: int = 7) -> list[dict]:
-    """Members with birthdays in the next N days (ignores birth year)."""
+def get_upcoming_birthdays(days: int = 7, past_days: int = 0) -> list[dict]:
+    """Members with birthdays in a window around today (ignores birth year).
+
+    days: how many days ahead to look (default 7)
+    past_days: how many days back to look (default 0)
+    """
     from zoneinfo import ZoneInfo
     MT = ZoneInfo("America/Denver")
     today = datetime.now(MT).date()
@@ -278,19 +282,22 @@ def get_upcoming_birthdays(days: int = 7) -> list[dict]:
             if not bday:
                 continue
             try:
-                # birthday stored as YYYY-MM-DD; compare month/day only
                 bday_date = datetime.strptime(bday, "%Y-%m-%d").date()
-                # Construct this year's birthday
+                # Try this year's birthday
                 this_year_bday = bday_date.replace(year=today.year)
-                # If it already passed this year, check next year
-                if this_year_bday < today:
-                    this_year_bday = bday_date.replace(year=today.year + 1)
                 delta = (this_year_bday - today).days
-                if 0 <= delta <= days:
-                    results.append({**m, "_days_until": delta, "_bday_this_year": this_year_bday.isoformat()})
+                # If outside window, try adjacent years
+                if delta > days:
+                    this_year_bday = bday_date.replace(year=today.year - 1)
+                    delta = (this_year_bday - today).days
+                elif delta < -past_days:
+                    this_year_bday = bday_date.replace(year=today.year + 1)
+                    delta = (this_year_bday - today).days
+                if -past_days <= delta <= days:
+                    results.append({**m, "_days_delta": delta, "_bday_this_year": this_year_bday.isoformat()})
             except ValueError:
                 continue
-    results.sort(key=lambda x: x["_days_until"])
+    results.sort(key=lambda x: x["_days_delta"])
     return results
 
 
@@ -463,7 +470,7 @@ def save_chat_message(role: str, text: str):
     meta_doc = meta_ref.get()
     history = []
     if meta_doc.exists:
-        history = meta_doc.get("messages", [])
+        history = (meta_doc.to_dict() or {}).get("messages", [])
     history.append({
         "role": role,
         "text": text,
