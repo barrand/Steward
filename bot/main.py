@@ -443,26 +443,6 @@ def _build_starlette_app():
         sent = await generate_morning_checkin(_ptb_app.bot)
         return JSONResponse({"sent": sent})
 
-    async def cron_birthday_check(request: Request):
-        if CRON_SECRET:
-            token = request.headers.get("X-Cron-Secret", "")
-            if token != CRON_SECRET:
-                return PlainTextResponse("Forbidden", status_code=403)
-
-        from reminders import check_and_send_birthdays
-        fired = await check_and_send_birthdays(_ptb_app.bot)
-        return JSONResponse({"fired": fired})
-
-    async def cron_evening_briefing(request: Request):
-        if CRON_SECRET:
-            token = request.headers.get("X-Cron-Secret", "")
-            if token != CRON_SECRET:
-                return PlainTextResponse("Forbidden", status_code=403)
-
-        from reminders import generate_evening_briefing
-        sent = await generate_evening_briefing(_ptb_app.bot)
-        return JSONResponse({"sent": sent})
-
     async def cron_backup(request: Request):
         if CRON_SECRET:
             token = request.headers.get("X-Cron-Secret", "")
@@ -472,16 +452,6 @@ def _build_starlette_app():
         from reminders import run_weekly_backup
         result = await run_weekly_backup(_ptb_app.bot)
         return JSONResponse({"result": result})
-
-    async def cron_reminders(request: Request):
-        if CRON_SECRET:
-            token = request.headers.get("X-Cron-Secret", "")
-            if token != CRON_SECRET:
-                return PlainTextResponse("Forbidden", status_code=403)
-
-        from reminders import check_and_fire_reminders
-        fired = await check_and_fire_reminders(_ptb_app.bot)
-        return JSONResponse({"fired": fired})
 
     async def health(request: Request):
         members = len(fsc._cache.get("members", {}))
@@ -501,10 +471,7 @@ def _build_starlette_app():
         routes=[
             Route("/webhook", webhook, methods=["POST"]),
             Route("/cron/morning_checkin", cron_morning_checkin, methods=["POST"]),
-            Route("/cron/birthday_check", cron_birthday_check, methods=["POST"]),
-            Route("/cron/evening_briefing", cron_evening_briefing, methods=["POST"]),
             Route("/cron/backup", cron_backup, methods=["POST"]),
-            Route("/cron/reminders", cron_reminders, methods=["POST"]),
             Route("/health", health, methods=["GET"]),
         ],
         lifespan=lifespan,

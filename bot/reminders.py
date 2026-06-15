@@ -24,46 +24,16 @@ logger = logging.getLogger("stew.reminders")
 MT = ZoneInfo("America/Denver")
 
 
-async def check_and_fire_reminders(bot) -> int:
-    """Check for due reminders and send them via Telegram.
-
-    Returns the number of reminders fired.
-    """
-    due = fsc.get_due_reminders()
-    if not due:
-        return 0
-
-    chat_id = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
-    fired = 0
-
-    for reminder in due:
-        rid = reminder.get("_id", "?")
-        message = reminder.get("message", "")
-        target_chat = reminder.get("chat_id", chat_id)
-
-        try:
-            await bot.send_message(
-                chat_id=target_chat,
-                text=f"⏰ Reminder: {message}",
-            )
-            fsc.mark_reminder_fired(rid)
-            fired += 1
-            logger.info("Fired reminder %s: %s", rid, message[:50])
-        except Exception as e:
-            logger.error("Failed to send reminder %s: %s", rid, e)
-
-    return fired
-
-
 async def generate_morning_checkin(bot) -> bool:
     """Generate and send the morning check-in.
 
-    Shows follow-ups due today, prayer reminders on schedule, and calendar matches.
+    Shows follow-ups due today, prayer reminders on schedule, and birthday alerts.
     Returns True if a check-in was sent.
     """
     chat_id = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
-    today = datetime.now(MT).date()
-    today_str = today.isoformat()
+    today = datetime.now(MT)
+    today_str = today.date().isoformat()
+    today_mmdd = today.strftime("%m-%d")
 
     # Dedup: skip if already sent today
     meta = fsc._cache.get("meta", {})
@@ -73,7 +43,26 @@ async def generate_morning_checkin(bot) -> bool:
 
     message_parts = []
 
-    # 1. Follow-ups due today or overdue
+    # 1. Birthday alerts (if any)
+    members = fsc._cache.get("members", {})
+    birthdays_today = [m for m in members.values() if m.get("birthday", "")[-5:] == today_mmdd]
+    if birthdays_today:
+        message_parts.append("🎂 *Birthdays today:*")
+        for member in birthdays_today:
+            name = member.get("name", "?")
+            bday = member.get("birthday", "")
+            try:
+                if bday and bday != "0000-" + today_mmdd:
+                    year = int(bday[:4])
+                    age = today.year - year
+                    age_text = f" (turning {age})"
+                else:
+                    age_text = ""
+            except (ValueError, IndexError):
+                age_text = ""
+            message_parts.append(f"  • {name}{age_text}")
+
+    # 2. Follow-ups due today or overdue
     follow_ups = fsc._cache.get("follow_ups", [])
     due_followups = [f for f in follow_ups if f.get("due_date", "").startswith(today_str) or f.get("due_date", "") < today_str]
     if due_followups:
@@ -83,12 +72,12 @@ async def generate_morning_checkin(bot) -> bool:
             topic = f.get("topic", "?")
             due = f.get("due_date", "?")
             if due < today_str:
-                days_overdue = (today - datetime.fromisoformat(due).date()).days
+                days_overdue = (today.date() - datetime.fromisoformat(due).date()).days
                 message_parts.append(f"  🚨 OVERDUE {days_overdue} days — Ask {name} about {topic}")
             else:
                 message_parts.append(f"  • Ask {name} about {topic}")
 
-    # 2. Prayer reminders on two-touch schedule
+    # 3. Prayer reminders on two-touch schedule
     prayers = fsc._cache.get("prayer_requests", [])
     due_prayers = [p for p in prayers if p.get("next_remind_date", "").split("T")[0] <= today_str and p.get("remind_count", 0) < 2]
     due_prayers = due_prayers[:3]  # Cap at 3 per day
@@ -101,7 +90,7 @@ async def generate_morning_checkin(bot) -> bool:
             remind_text = "first reminder" if remind == 0 else "second reminder"
             message_parts.append(f"  • {name} — {text} ({remind_text})")
 
-    # 3. Heartbeat if nothing else
+    # 4. Heartbeat if nothing else
     if not message_parts:
         await bot.send_message(
             chat_id=chat_id,
@@ -144,60 +133,10 @@ async def generate_morning_checkin(bot) -> bool:
         "last_morning_checkin_date": today_str,
     }, merge=True)
 
-    logger.info("Sent morning check-in")
+    logger.info("Sent morning check-in with birthdays")
     return True
 
 
-async def check_and_send_birthdays(bot) -> int:
-    """Check for birthdays today and send notifications.
-
-    Returns the number of birthday messages sent.
-    """
-    chat_id = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
-    today = datetime.now(MT)
-    today_mmdd = today.strftime("%m-%d")
-
-    members = fsc._cache.get("members", {})
-    birthdays_today = [m for m in members.values() if m.get("birthday", "")[-5:] == today_mmdd]
-
-    for member in birthdays_today:
-        name = member.get("name", "?")
-        bday = member.get("birthday", "")
-        try:
-            # Try to extract age if we have full birth year
-            if bday and bday != "0000-" + today_mmdd:
-                year = int(bday[:4])
-                age = today.year - year
-                age_text = f" He's turning {age}!"
-            else:
-                age_text = ""
-        except (ValueError, IndexError):
-            age_text = ""
-
-        message = f"🎂 *{name}'s birthday today!*{age_text}\n"
-
-        # Enrich with latest interview or note
-        interviews = [i for i in fsc._cache.get("interviews", []) if i.get("member_id") == member.get("_id")]
-        if interviews:
-            latest = interviews[0]
-            message += f"Last talked {_time_ago(latest.get('date', ''))} ago.\n"
-
-        message += "Might be a great time to reach out! 😊"
-
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-
-    return len(birthdays_today)
-
-
-async def generate_evening_briefing(bot) -> bool:
-    """Generate evening briefing for tomorrow's interviews.
-
-    Checks tomorrow's calendar for member visits and surfaces context.
-    Returns True if a briefing was sent.
-    """
-    # TODO: Integrate Google Calendar when available
-    # For now, skip
-    return False
 
 
 async def run_weekly_backup(bot) -> str:

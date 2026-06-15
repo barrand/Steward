@@ -82,33 +82,15 @@ gcloud run deploy stew \
 ### 7. Set up Cloud Scheduler jobs
 
 ```bash
-# Morning checkin (7 AM MT)
+# Morning checkin: follow-ups, prayers, birthdays, today's calendar (7 AM MT)
 gcloud scheduler jobs create http morning-checkin \
   --schedule="0 13 * * *" --uri="https://[SERVICE_URL]/cron/morning_checkin" \
-  --http-method=POST --headers="Authorization: Bearer $CRON_SECRET" \
-  --location=us-central1
-
-# Birthday check (8 AM MT)
-gcloud scheduler jobs create http birthday-check \
-  --schedule="0 14 * * *" --uri="https://[SERVICE_URL]/cron/birthday_check" \
-  --http-method=POST --headers="Authorization: Bearer $CRON_SECRET" \
-  --location=us-central1
-
-# Evening briefing (5:30 PM MT)
-gcloud scheduler jobs create http evening-briefing \
-  --schedule="30 23 * * *" --uri="https://[SERVICE_URL]/cron/evening_briefing" \
   --http-method=POST --headers="Authorization: Bearer $CRON_SECRET" \
   --location=us-central1
 
 # Weekly backup (Sunday 3 AM MT)
 gcloud scheduler jobs create http weekly-backup \
   --schedule="0 9 * * 0" --uri="https://[SERVICE_URL]/cron/backup" \
-  --http-method=POST --headers="Authorization: Bearer $CRON_SECRET" \
-  --location=us-central1
-
-# Reminders (every 15 min)
-gcloud scheduler jobs create http reminders \
-  --schedule="*/15 * * * *" --uri="https://[SERVICE_URL]/cron/reminders" \
   --http-method=POST --headers="Authorization: Bearer $CRON_SECRET" \
   --location=us-central1
 ```
@@ -202,20 +184,29 @@ Stew runs on Google Cloud Platform. Estimated monthly costs (with `--min-instanc
 
 | Service | Estimate | Notes |
 |---------|----------|-------|
-| Cloud Run | <$1 | Only charges for actual CPU time when messages arrive |
+| Cloud Run | <$0.50 | Only 2 scheduler jobs/day × 3 seconds each = minimal CPU time |
 | Firestore | <$5 | Free tier covers ~25k reads/day; Stew uses ~100/day |
-| Cloud Scheduler | Free | 3 free jobs/month, then $0.10/job/month |
+| Cloud Scheduler | Free | 2 jobs (under 3 free/month tier) |
 | Cloud Storage | <$1 | Minimal data, weekly backups only |
-| **Total** | **~$6-10/month** | Very cost-effective for low usage |
+| **Total** | **~$4-6/month** | Very cost-effective for low usage |
 
-**⚠️ WITHOUT `--min-instances=0`**: Cloud Run charges ~$2/day ($60/month) to keep instances warm, even when idle. Always set minimum instances to 0.
+**Cost Optimizations Made:**
+- ✅ Removed 15-minute ad-hoc reminder checks (saved ~$1.15/month)
+- ✅ Combined morning checkin + birthdays into one job (saved overhead)
+- ✅ Combined evening briefing into morning checkin (reduced from 3 to 2 scheduler jobs)
+- ✅ Use `--min-instances=0` in Cloud Run (avoid idle charges)
 
 ### Shut Down Tanuki
-If you're paying for the old Tanuki bot, delete it to stop charges:
+If you're paying for the old Tanuki bot, delete or pause it to stop charges:
 
 ```bash
+# Pause (temporarily disable scheduler jobs):
+gcloud scheduler jobs pause tanuki-briefing
+gcloud scheduler jobs pause tanuki-reminders
+# ... pause any other tanuki scheduler jobs
+
+# Or delete the service entirely:
 gcloud run services delete tanuki --region=us-central1
-# Or in Cloud Console: Cloud Run → tanuki → Delete
 ```
 
 ## Privacy & Security
