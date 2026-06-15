@@ -95,7 +95,9 @@ def import_csv(csv_path: str, dry_run: bool = False) -> None:
     try:
         docs = db.collection("members").stream()
         for doc in docs:
-            existing_members[doc.get("name")] = doc.id
+            data = doc.to_dict() or {}
+            if data.get("name"):
+                existing_members[data["name"]] = doc.id
     except Exception as e:
         print(f"⚠️  Could not fetch existing members: {e}", file=sys.stderr)
 
@@ -139,7 +141,6 @@ def import_csv(csv_path: str, dry_run: bool = False) -> None:
             if not dry_run:
                 try:
                     db.collection("members").document(member_id).update(member_data)
-                    fsc._log_change("members", member_id, member_data, "import-csv update")
                     updated_count += 1
                     print(f"  Row {i}: ✏️  Updated {name}")
                 except Exception as e:
@@ -154,7 +155,6 @@ def import_csv(csv_path: str, dry_run: bool = False) -> None:
                 try:
                     doc_ref = db.collection("members").document()
                     doc_ref.set(member_data)
-                    fsc._log_change("members", doc_ref.id, member_data, "import-csv create")
                     imported_count += 1
                     print(f"  Row {i}: ✅ Created {name}")
                 except Exception as e:

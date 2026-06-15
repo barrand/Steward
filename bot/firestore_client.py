@@ -236,14 +236,14 @@ def init_cache():
 # ── Read Layer (from cache) ───────────────────────────────
 
 def get_member(name_or_id: str) -> dict | None:
-    """Get member by name or ID."""
+    """Get member by name or ID. Matches if all query words appear in the name."""
     with _cache_lock:
-        # First try ID
         if name_or_id in _cache["members"]:
             return _cache["members"][name_or_id]
-        # Fuzzy match by name
+        query_words = name_or_id.lower().split()
         for mid, m in _cache["members"].items():
-            if name_or_id.lower() in m.get("name", "").lower():
+            member_name = m.get("name", "").lower()
+            if all(w in member_name for w in query_words):
                 return m
     return None
 
@@ -267,10 +267,31 @@ def get_pending_follow_ups() -> list[dict]:
 
 
 def get_upcoming_birthdays(days: int = 7) -> list[dict]:
-    """Members with birthdays in next N days."""
-    # TODO: implement
+    """Members with birthdays in the next N days (ignores birth year)."""
+    from zoneinfo import ZoneInfo
+    MT = ZoneInfo("America/Denver")
+    today = datetime.now(MT).date()
+    results = []
     with _cache_lock:
-        return [m for m in _cache["members"].values() if m.get("birthday")][:10]
+        for m in _cache["members"].values():
+            bday = m.get("birthday", "")
+            if not bday:
+                continue
+            try:
+                # birthday stored as YYYY-MM-DD; compare month/day only
+                bday_date = datetime.strptime(bday, "%Y-%m-%d").date()
+                # Construct this year's birthday
+                this_year_bday = bday_date.replace(year=today.year)
+                # If it already passed this year, check next year
+                if this_year_bday < today:
+                    this_year_bday = bday_date.replace(year=today.year + 1)
+                delta = (this_year_bday - today).days
+                if 0 <= delta <= days:
+                    results.append({**m, "_days_until": delta, "_bday_this_year": this_year_bday.isoformat()})
+            except ValueError:
+                continue
+    results.sort(key=lambda x: x["_days_until"])
+    return results
 
 
 def get_pending_reminder_count() -> int:

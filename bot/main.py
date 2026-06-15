@@ -167,7 +167,9 @@ async def cmd_upcoming(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in birthdays:
         name = member.get("name", "?")
         bday = member.get("birthday", "")
-        lines.append(f"• {name} — {bday[-5:]}")  # MM-DD
+        days_until = member.get("_days_until", 0)
+        when = "today!" if days_until == 0 else f"in {days_until}d"
+        lines.append(f"• {name} — {bday[5:]} ({when})")
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
@@ -263,7 +265,7 @@ async def _do_process(update: Update, context: ContextTypes.DEFAULT_TYPE, user_i
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
     image_bytes = None
-    csv_bytes = None
+    pdf_bytes = None
 
     if msg.photo:
         try:
@@ -273,7 +275,7 @@ async def _do_process(update: Update, context: ContextTypes.DEFAULT_TYPE, user_i
             await file.download_to_memory(buf)
             image_bytes = buf.getvalue()
             if not text:
-                text = "What's in this image? If it's a booking confirmation, extract the details."
+                text = "What's in this image?"
         except Exception as e:
             logger.error("Photo download failed: %s", e)
             await msg.reply_text("I couldn't download that photo. Try sending it again.")
@@ -281,23 +283,23 @@ async def _do_process(update: Update, context: ContextTypes.DEFAULT_TYPE, user_i
 
     elif msg.document:
         doc = msg.document
-        if doc.mime_type == "text/csv" or doc.file_name.endswith(".csv"):
+        if doc.mime_type == "application/pdf" or (doc.file_name or "").endswith(".pdf"):
             try:
                 file = await doc.get_file()
                 buf = io.BytesIO()
                 await file.download_to_memory(buf)
-                csv_bytes = buf.getvalue()
+                pdf_bytes = buf.getvalue()
                 if not text:
-                    text = f"I got a CSV file: {doc.file_name}. Process it for me."
+                    text = f"I got a PDF file: {doc.file_name}. Process it for me."
             except Exception as e:
-                logger.error("CSV download failed: %s", e)
-                await msg.reply_text("I couldn't download that CSV. Try sending it again.")
+                logger.error("PDF download failed: %s", e)
+                await msg.reply_text("I couldn't download that PDF. Try sending it again.")
                 return
         else:
-            await msg.reply_text(f"I can handle photos and CSVs, but not {doc.mime_type} files.")
+            await msg.reply_text(f"I can handle photos and PDFs, but not {doc.mime_type} files.")
             return
 
-    if not text and not image_bytes and not csv_bytes:
+    if not text and not image_bytes and not pdf_bytes:
         return
 
     try:
@@ -307,7 +309,7 @@ async def _do_process(update: Update, context: ContextTypes.DEFAULT_TYPE, user_i
             chat_id=chat_id,
             user_name=user_name,
             image_bytes=image_bytes,
-            csv_bytes=csv_bytes,
+            pdf_bytes=pdf_bytes,
         )
 
         reply_markup = None
