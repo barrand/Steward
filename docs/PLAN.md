@@ -238,7 +238,7 @@ The confirmation flow is already built in Tanuki — just reuse it with warmer l
 This is the highest-value calendar integration. Rather than just "show appointments",
 Stew proactively surfaces member notes BEFORE a meeting.
 
-Morning checkin fires at 7 AM. If the calendar has an appointment that day containing
+Morning checkin fires at 9 AM. If the calendar has an appointment that day containing
 a quorum member's name, the message is enriched:
 
 ```
@@ -551,7 +551,7 @@ destructive/modifying writes need confirmation via inline keyboard.
 
 ## Cron Jobs
 
-### 1. `/cron/morning_checkin` — Daily 7:00 AM MT
+### 1. `/cron/morning_checkin` — Daily 9:00 AM MT
 ```python
 async def generate_morning_checkin(bot) -> bool:
     # Dedup: skip if already sent today (same pattern as Tanuki briefing)
@@ -612,7 +612,7 @@ async def generate_morning_checkin(bot) -> bool:
     return True
 ```
 
-### 2. `/cron/birthday_check` — Daily 8:00 AM MT
+### 2. `/cron/birthday_check` — Daily 9:00 AM MT
 ```python
 async def check_and_send_birthdays(bot) -> int:
     today = datetime.now(MT)
@@ -805,7 +805,7 @@ GOOGLE_APPLICATION_CREDENTIALS=service-account-key.json
 ### Step 7 — Deploy to GCP
 - [ ] Create new GCP project or reuse Tanuki's
 - [ ] Set up Cloud Run service
-- [ ] Configure Cloud Scheduler jobs (morning checkin 7 AM MT, birthday check 8 AM MT, evening briefing 5:30 PM MT, reminders every 15 min, weekly backup Sunday 3 AM MT)
+- [ ] Configure Cloud Scheduler jobs (morning checkin 9 AM Mountain Time, evening briefing 5:30 PM Mountain Time, reminders every 15 min, weekly backup Sunday 3 AM Mountain Time)
 - [ ] Create GCS bucket `stew-backups` with 12-week lifecycle rule
 - [ ] Set Telegram webhook
 - [ ] Smoke test full flow
@@ -828,7 +828,7 @@ GOOGLE_APPLICATION_CREDENTIALS=service-account-key.json
 ## Open Questions for Bryce
 
 1. **Bot name**: "Stew" is the working name — any preferences? Other ideas?
-2. **Reminder time**: 7 AM Mountain Time for morning check-in?
+2. **Reminder time**: 9 AM Mountain Time for morning check-in?
 3. **GCP project**: New project or reuse the Tanuki one?
 4. **Calendar**: Which Google Calendar account? Personal Gmail or a work account?
 5. **Birthdays without year**: Some members you may only know the month/day. Store as `0000-MM-DD` — Stew will still remind, just won't know the age.

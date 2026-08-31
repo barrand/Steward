@@ -9,7 +9,7 @@
 ## Deployment & Infrastructure
 
 - [ ] Deploy to Cloud Run (build + push container)
-- [ ] Configure Cloud Scheduler (2 jobs: morning checkin at 7 AM MT, weekly backup)
+- [ ] Configure Cloud Scheduler (2 jobs: morning checkin at 9 AM Mountain Time, weekly backup)
 - [ ] Set Telegram webhook
 - [ ] Test end-to-end with Telegram
 

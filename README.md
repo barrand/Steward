@@ -82,16 +82,27 @@ gcloud run deploy stew \
 ### 7. Set up Cloud Scheduler jobs
 
 ```bash
-# Morning checkin: follow-ups, prayers, birthdays, today's calendar (7 AM MT)
+# Morning checkin: follow-ups, prayers, and birthdays (9 AM Mountain Time)
 gcloud scheduler jobs create http morning-checkin \
-  --schedule="0 13 * * *" --uri="https://[SERVICE_URL]/cron/morning_checkin" \
-  --http-method=POST --headers="Authorization: Bearer $CRON_SECRET" \
+  --schedule="0 9 * * *" --time-zone="America/Denver" \
+  --uri="https://[SERVICE_URL]/cron/morning_checkin" \
+  --http-method=POST --headers="X-Cron-Secret=$CRON_SECRET" \
   --location=us-central1
 
 # Weekly backup (Sunday 3 AM MT)
 gcloud scheduler jobs create http weekly-backup \
   --schedule="0 9 * * 0" --uri="https://[SERVICE_URL]/cron/backup" \
   --http-method=POST --headers="Authorization: Bearer $CRON_SECRET" \
+  --location=us-central1
+```
+
+If the job already exists, update it instead:
+
+```bash
+gcloud scheduler jobs update http morning-checkin \
+  --schedule="0 9 * * *" --time-zone="America/Denver" \
+  --uri="https://[SERVICE_URL]/cron/morning_checkin" \
+  --http-method=POST --headers="X-Cron-Secret=$CRON_SECRET" \
   --location=us-central1
 ```
 

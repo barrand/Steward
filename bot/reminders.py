@@ -1,8 +1,7 @@
 """Stew Cron Job Handlers
 
 Implements all scheduled tasks:
-- morning_checkin: Prayer reminders + follow-ups (7 AM MT)
-- birthday_check: Birthday alerts (8 AM MT)
+- morning_checkin: Prayer reminders + follow-ups + birthdays (9 AM MT)
 - evening_briefing: Tomorrow's interview prep (5:30 PM MT)
 - weekly_backup: JSON snapshot export (Sunday 3 AM MT)
 - check_and_fire_reminders: Generic reminder dispatch (every 15 min)
@@ -24,6 +23,23 @@ logger = logging.getLogger("stew.reminders")
 MT = ZoneInfo("America/Denver")
 
 
+def _birthdays_for_local_day(members: dict, local_day) -> list[dict]:
+    """Return members whose month and day match ``local_day``.
+
+    Birthdays are calendar dates, not instants in time.  Comparing the stored
+    month/day with a date derived in America/Denver keeps the alert aligned
+    with the recipient's local day regardless of the scheduler's host zone.
+    """
+    month_day = local_day.strftime("-%m-%d")
+    return [
+        member
+        for member in members.values()
+        if isinstance(member.get("birthday"), str)
+        and member["birthday"].endswith(month_day)
+        and len(member["birthday"]) == 10
+    ]
+
+
 async def generate_morning_checkin(bot) -> bool:
     """Generate and send the morning check-in.
 
@@ -33,7 +49,6 @@ async def generate_morning_checkin(bot) -> bool:
     chat_id = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
     today = datetime.now(MT)
     today_str = today.date().isoformat()
-    today_mmdd = today.strftime("%m-%d")
 
     # Dedup: skip if already sent today
     meta = fsc._cache.get("meta", {})
@@ -45,14 +60,14 @@ async def generate_morning_checkin(bot) -> bool:
 
     # 1. Birthday alerts (if any)
     members = fsc._cache.get("members", {})
-    birthdays_today = [m for m in members.values() if m.get("birthday", "")[-5:] == today_mmdd]
+    birthdays_today = _birthdays_for_local_day(members, today.date())
     if birthdays_today:
         message_parts.append("🎂 *Birthdays today:*")
         for member in birthdays_today:
             name = member.get("name", "?")
             bday = member.get("birthday", "")
             try:
-                if bday and bday != "0000-" + today_mmdd:
+                if bday and not bday.startswith("0000-"):
                     year = int(bday[:4])
                     age = today.year - year
                     age_text = f" (turning {age})"
