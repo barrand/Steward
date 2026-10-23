@@ -1,5 +1,10 @@
 # Elder's Quorum Bot ("Stew") — Deep Dive Plan
 
+> Historical quorum-assistant design. The active roadmap is
+> [STEW_PLAN.md](../STEW_PLAN.md). Birthday notifications remain an MVP requirement;
+> preserve the existing combined morning check-in and member data. This document
+> includes unimplemented proposals and is not a deployment record.
+
 ## What We're Building
 
 A personal pastoral assistant for an Elder's Quorum president (Bryce, ~100 members).

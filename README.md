@@ -1,4 +1,23 @@
-# Stew — Elder's Quorum Assistant Bot
+# Stew — Email Triage and Birthday Notifications
+
+Stew's next milestone is read-only work Outlook triage with TypeSafe AI's Jev and
+Telegram alerts. Existing member birthday notifications must continue working.
+Email is planned; the current code implements the earlier quorum bot and its
+combined morning check-in, including birthdays.
+
+See [STEW_PLAN.md](STEW_PLAN.md) for the active architecture, repository assessment,
+milestones, and acceptance criteria, and [TODO.md](TODO.md) for the checklist.
+Email will run as a separate service from the existing bot.
+
+## Existing quorum bot reference
+
+The sections below are historical reference, not an email setup guide or evidence
+of a live deployment. Calendar integration, weekly backup, and undo remain
+placeholders; the referenced `.env.example` is absent. Birthdays are implemented
+in `/cron/morning_checkin`; preserve that job and member data while adding email.
+The working importer is `python bot/csv_import.py import-csv Elders.csv`, rather
+than the stub import command shown later. Consult the active plan before following
+historical deployment instructions or using its cost estimates.
 
 A personal pastoral assistant for an Elder's Quorum president. Stew helps you capture interview notes, track prayer requests, schedule follow-ups, and receive smart daily reminders via Telegram.
 
