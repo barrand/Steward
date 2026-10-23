@@ -18,7 +18,7 @@ read-only: no marking read, moving, archiving, deleting, or sending. Generated
 summaries, Gmail, behavior learning, a dashboard, and conversational email commands
 are post-MVP.
 
-This is the active roadmap. `docs/PLAN.md` is the historical quorum-assistant
+This is the active roadmap. `docs/archive/PLAN.md` is the historical quorum-assistant
 design. This revision changes documentation only; email triage is not implemented.
 
 ## Repository assessment
